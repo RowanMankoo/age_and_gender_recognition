@@ -20,7 +20,7 @@ venv:
 
 # ======================= Initial setup =======================
 
-
+# TODO: add this to dev container and check if runs e2e
 download-data: 
 	mkdir -p Data
 # Download face data

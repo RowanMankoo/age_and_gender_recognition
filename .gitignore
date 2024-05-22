@@ -167,3 +167,4 @@ cython_debug/
 
 temp.ipynb
 *.pt
+lightning_logs/

@@ -43,8 +43,13 @@ class MultiTaskNet(pl.LightningModule):
         self.age_loss_fn = nn.CrossEntropyLoss(weight=age_class_weights)
         self.gender_loss_fn = nn.BCELoss()
 
+        if self.config.model_config.pretrained:
+            weights = models.ResNet18_Weights
+        else:
+            weights = None
+
         self.resnet = models.resnet18(
-            pretrained=self.config.model_config.pretrained,
+            weights=weights,
         )
         if self.config.model_config.freeze_starting_layers:
             self.resnet = freeze_layers(self.resnet)
