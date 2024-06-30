@@ -6,7 +6,7 @@ age_labels_to_bins:
   4: (40, 49)
   5: (50, 59)
   6: (60, 69)
-  7: (70, 100)
+  7: (70, 120)
 resnet_backbone: "resnet18"
 pretrained: True
-freeze_starting_layers: True
+freeze_starting_layers: False

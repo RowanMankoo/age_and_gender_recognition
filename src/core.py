@@ -34,12 +34,6 @@ class SchedulerConfig(BaseModel):
     verbose: bool
 
 
-class MetadataCleaningConfig(BaseModel):
-    min_face_score: int
-    max_num_age_appearances: int
-    max_num_total_appearances: int
-
-
 class ModelConfig(BaseModel):
     age_labels_to_bins: Dict[int, str]
     resnet_backbone: ResnetBackboneEnum
@@ -57,19 +51,14 @@ class ModelTrainingConfig(BaseModel):
 
 
 class Config(BaseModel):
-    metadata_cleaning_config: MetadataCleaningConfig
     model_config: ModelConfig
     model_training_config: ModelTrainingConfig
 
 
 def load_and_validate_config(
-    path_to_metadata_cleaning_config: str,
     path_to_model_config: str,
     path_to_model_training_config: str,
 ) -> Config:
-
-    with open(path_to_metadata_cleaning_config, "r") as file:
-        metadata_cleaning_config = yaml.safe_load(file)
 
     with open(path_to_model_config, "r") as file:
         model_config = yaml.safe_load(file)
@@ -78,7 +67,6 @@ def load_and_validate_config(
         model_training_config = yaml.safe_load(file)
 
     config = Config(
-        metadata_cleaning_config=metadata_cleaning_config,
         model_config=model_config,
         model_training_config=model_training_config,
     )

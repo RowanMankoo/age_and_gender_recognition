@@ -1,4 +1,5 @@
 import pytorch_lightning as pl
+from pytorch_lightning.utilities.types import EVAL_DATALOADERS
 import torch
 import torch.nn as nn
 import torchvision.models as models
@@ -8,19 +9,29 @@ from src.core import Config
 from src.training import get_preprocessing_transforms
 
 
-def freeze_layers(model, num_layers=6):
-    ct = 0
-    for child in model.children():
-        ct += 1
-        if ct < num_layers:
-            for param in child.parameters():
-                param.requires_grad = False
+# TODO: fix this
+def freeze_layers_resnet18(model):
+    # Freeze all layers
+    for param in model.parameters():
+        param.requires_grad = False
+
+    # Unfreeze the last layer
+    for param in model.fc.parameters():
+        param.requires_grad = True
+
+    # Unfreeze the first few layers
+    for param in model.conv1.parameters():
+        param.requires_grad = True
+    for param in model.bn1.parameters():
+        param.requires_grad = True
+    for param in model.layer1.parameters():
+        param.requires_grad = True
 
     return model
 
 
 class HeadBlock(nn.Module):
-    def __init__(self, out_channels, in_channels):
+    def __init__(self, in_channels, out_channels):
         super(HeadBlock, self).__init__()
 
         self.fc1 = nn.Linear(in_channels, 500)
@@ -35,6 +46,11 @@ class HeadBlock(nn.Module):
         return out
 
 
+class Identity(nn.Module):
+    def forward(self, x):
+        return x
+
+
 class MultiTaskNet(pl.LightningModule):
     def __init__(self, config: Config, age_class_weights: torch.Tensor):
         super(MultiTaskNet, self).__init__()
@@ -43,6 +59,9 @@ class MultiTaskNet(pl.LightningModule):
         self.age_loss_fn = nn.CrossEntropyLoss(weight=age_class_weights)
         self.gender_loss_fn = nn.BCELoss()
 
+        self._init_model_architecture()
+
+    def _init_model_architecture(self):
         if self.config.model_config.pretrained:
             weights = models.ResNet18_Weights
         else:
@@ -51,29 +70,29 @@ class MultiTaskNet(pl.LightningModule):
         self.resnet = models.resnet18(
             weights=weights,
         )
-        if self.config.model_config.freeze_starting_layers:
-            self.resnet = freeze_layers(self.resnet)
+        self.resnet.fc = Identity()
 
-        resnet_output_shape = self.resnet.fc.in_features
+        if self.config.model_config.freeze_starting_layers:
+            self.resnet = freeze_layers_resnet18(self.resnet)
+
+        resnet_output_shape = 512
         self.sig = nn.Sigmoid()
 
         # Ordinal Classification
-        self.age_head = HeadBlock(8, in_channels=resnet_output_shape)
+        self.age_head = HeadBlock(
+            in_channels=resnet_output_shape,
+            out_channels=len(self.config.model_config.age_labels_to_bins),
+        )
         self.softmax = nn.Softmax(dim=1)
-        # Binary Classification Task so output of dimension 2
-        self.gender_head = HeadBlock(1, in_channels=resnet_output_shape)
+        self.gender_head = HeadBlock(in_channels=resnet_output_shape, out_channels=1)
 
-    def forward(self, x: torch.Tensor, training=False):
-        if training:
-            preprocessing_transforms = get_preprocessing_transforms(
-                resize=False, random_horizontal_flip=True, normalize=True
-            )
-        else:
+    def forward(self, x: torch.Tensor, training: bool):
+        if not training:
             preprocessing_transforms = get_preprocessing_transforms(
                 resize=True, random_horizontal_flip=False, normalize=True
             )
+            x = preprocessing_transforms(x)
 
-        x = preprocessing_transforms(x)
         out = self.resnet(x)
 
         age = self.age_head(out)
@@ -91,30 +110,23 @@ class MultiTaskNet(pl.LightningModule):
 
         return age_pred, gender_pred
 
-    def predict(self, x, training=False):
-        age, gender = self.forward(x, training=training)
+    def training_step(self, batch, batch_idx):
+        return self._shared_step(batch, "train")
+
+    # TODO: figure out what this does?
+    def validation_step(self, batch, batch_idx):
+        return self._shared_step(batch, "val")
+
+    def test_step(self, batch, batch_idx):
+        return self._shared_step(batch, "test")
+
+    def predict_step(self, batch):
+        # TODO: figure this one out
+        x, (y_age, y_gender) = batch
+        age, gender = self.forward(x, training=False)
         age_pred, gender_pred = self.transform_scores_to_predictions(age, gender)
 
         return age_pred, gender_pred
-
-    def training_step(self, batch, batch_idx):
-        x, y_age, y_gender = batch
-        age, gender = self.forward(x, training=True)
-
-        # TODO: remove this
-        loss_age = F.cross_entropy(age, y_age)
-        loss_gender = F.binary_cross_entropy(gender, y_gender)
-        loss = loss_age + loss_gender
-        self.log("train_loss", loss)
-        return loss
-
-    def validation_step(self, batch, batch_idx):
-        x, y_age, y_gender = batch
-        age, gender = self.forward(x)
-        loss_age = F.cross_entropy(age, y_age)
-        loss_gender = F.binary_cross_entropy(gender, y_gender)
-        loss = loss_age + loss_gender
-        self.log("val_loss", loss)
 
     def configure_optimizers(self):
         optimizer = torch.optim.Adam(
@@ -126,6 +138,27 @@ class MultiTaskNet(pl.LightningModule):
         )
         return {
             "optimizer": optimizer,
-            "lr_scheduler": scheduler,
-            "monitor": "val_loss",
+            "lr_scheduler": {
+                "scheduler": scheduler,
+                "interval": "epoch",
+                "monitor": "val_loss_total",
+                "frequency": 1,
+            },
         }
+
+    def _shared_step(self, batch, name: str):
+        x, (y_age, y_gender) = batch
+        age, gender = self.forward(x, training=True)
+
+        self.log_dict(
+            {
+                name + "_loss_age": (loss_age := self.age_loss_fn(age, y_age)),
+                name
+                + "_loss_gender": (
+                    loss_gender := self.gender_loss_fn(gender, y_gender)
+                ),
+                name + "_loss_total": (total_loss := loss_age + loss_gender),
+            },
+            prog_bar=True,
+        )
+        return total_loss

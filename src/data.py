@@ -55,10 +55,10 @@ class IMDBDataset(Dataset):
         self,
         df: pd.DataFrame,
         transforms: transforms.Compose = get_preprocessing_transforms(
-            resize=True, random_horizontal_flip=False, normalize=False
+            resize=True, random_horizontal_flip=True, normalize=True
         ),
     ):
-        self.folder_directory = Path("Data/imdb_crop")
+        self.folder_directory = Path("Data/crop_part1")
         self.df = df.reset_index(drop=True)
         self.transform = transforms
 
@@ -66,13 +66,13 @@ class IMDBDataset(Dataset):
         return len(self.df)
 
     def __getitem__(self, index: int) -> Tuple[torch.Tensor, torch.Tensor]:
-        image_path = self.df["image_path"][index]
+        filename = self.df["filename"][index]
         age = self.df["age"][index]
         gender = self.df["gender"][index]
 
         # Load image into Tensor
-        image_path = self.folder_directory / image_path
-        image = Image.open(image_path)
+        filename = self.folder_directory / filename
+        image = Image.open(filename)
         image = self.transform(image)
 
         label = torch.tensor([int(age), int(gender)], dtype=torch.float)
@@ -98,7 +98,7 @@ class MyCollate:
         ages = labels[:, 0].long()
         # TODO: don't like use of this class here
         age_transformer = AgeTransformer(self.age_labels_to_bins)
-        ages = age_transformer.ages_to_labels(ages.numpy())
+        ages = age_transformer.ages_to_labels(ages.numpy()).type(torch.LongTensor)
 
         gender = labels[:, 1]
 
