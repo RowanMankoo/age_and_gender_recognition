@@ -10,6 +10,7 @@ from torchvision import transforms
 from config.core import Config
 from src.training import AgeTransformer, get_preprocessing_transforms
 from torchvision.transforms.functional import to_tensor
+from torchvision.datasets.vision import VisionDataset
 
 
 def get_dataloaders(
@@ -49,41 +50,6 @@ def _get_dataloader(df: pd.DataFrame, batch_size: int, age_labels_to_bins: dict)
         collate_fn=MyCollate(batch_size, age_labels_to_bins),
     )
     return dataloader
-
-
-class IMDBDataset(Dataset):
-    def __init__(
-        self,
-        df: pd.DataFrame,
-        transforms: transforms.Compose = get_preprocessing_transforms(
-            resize=True, random_horizontal_flip=True, normalize=True
-        ),
-    ):
-        self.folder_directory = Path("Data/crop_part1")
-        self.df = df.reset_index(drop=True)
-        self.transform = transforms
-
-    def __len__(self):
-        return len(self.df)
-
-    def __getitem__(self, index: int) -> Tuple[torch.Tensor, torch.Tensor]:
-        filename = self.df["filename"][index]
-        age = self.df["age"][index]
-        gender = self.df["gender"][index]
-
-        # Load image into Tensor
-        filename = self.folder_directory / filename
-        image = Image.open(filename)
-        # image = to_tensor(image)
-        # image = self.transform(image)
-
-        label = torch.tensor([int(age), int(gender)], dtype=torch.float)
-
-        return image, label
-
-
-# TODO: implement this
-from torchvision.datasets.vision import VisionDataset
 
 
 class UTKFaceDataset(VisionDataset):

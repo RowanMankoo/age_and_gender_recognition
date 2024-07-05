@@ -10,7 +10,7 @@ from torch.utils.data import DataLoader
 
 from config.core import load_and_validate_config
 from src.datasets import get_dataloaders, UTKFaceDataset
-from src.modelling import MultiTaskNet, MultiTaskNetWorking
+from src.modelling import MultiTaskNet
 from src.training import get_age_class_weights, split_dataset, calculate_mean_std
 from lightning.pytorch.callbacks import LearningRateMonitor, ModelCheckpoint
 
@@ -19,7 +19,7 @@ from lightning.pytorch.callbacks import LearningRateMonitor, ModelCheckpoint
 # which will trade-off precision for performance.
 
 # TODO: logger
- 
+
 if __name__ == "__main__":
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     torch.set_float32_matmul_precision("medium")
@@ -92,7 +92,7 @@ if __name__ == "__main__":
 
     # TODO: send config into this
     # TODO: allow for loading of checkpointed model
-    model = MultiTaskNetWorking()
+    model = MultiTaskNet()
 
     trainer.fit(model, train_loader, val_loader)
 
