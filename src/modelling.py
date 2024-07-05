@@ -1,11 +1,14 @@
-import pytorch_lightning as pl
 from pytorch_lightning.utilities.types import EVAL_DATALOADERS
 import torch
 import torch.nn as nn
 import torchvision.models as models
 from torch.nn import functional as F
+import lightning as L
+from torchvision.models import resnet18
+import torch.optim as optim
 
-from src.core import Config
+
+from config.core import Config
 from src.training import get_preprocessing_transforms
 
 
@@ -51,7 +54,7 @@ class Identity(nn.Module):
         return x
 
 
-class MultiTaskNet(pl.LightningModule):
+class MultiTaskNet(L.LightningModule):
     def __init__(self, config: Config, age_class_weights: torch.Tensor):
         super(MultiTaskNet, self).__init__()
         self.config = config
@@ -87,19 +90,19 @@ class MultiTaskNet(pl.LightningModule):
         self.gender_head = HeadBlock(in_channels=resnet_output_shape, out_channels=1)
 
     def forward(self, x: torch.Tensor, training: bool):
-        if not training:
-            preprocessing_transforms = get_preprocessing_transforms(
-                resize=True, random_horizontal_flip=False, normalize=True
-            )
-            x = preprocessing_transforms(x)
+        # if not training:
+        #     preprocessing_transforms = get_preprocessing_transforms(
+        #         resize=True, random_horizontal_flip=False, normalize=True
+        #     )
+        #     x = preprocessing_transforms(x)
 
         out = self.resnet(x)
 
-        age = self.age_head(out)
+        # age = self.age_head(out)
         gender = self.gender_head(out)
         gender = self.sig(gender).reshape(-1)
 
-        return age, gender
+        return gender
 
     def transform_scores_to_predictions(self, age, gender):
         with torch.no_grad():
@@ -111,14 +114,30 @@ class MultiTaskNet(pl.LightningModule):
         return age_pred, gender_pred
 
     def training_step(self, batch, batch_idx):
-        return self._shared_step(batch, "train")
+        x, y = batch
+        preds = self.forward(x, training=True)
+        loss = self.gender_loss_fn(preds, y)
+        acc = (preds.round() == y).float().mean()
+
+        self.log("train_loss", loss, on_step=True, on_epoch=True, prog_bar=True)
+        self.log("train_acc", acc, on_step=True, on_epoch=True, prog_bar=True)
+
+        return loss
 
     # TODO: figure out what this does?
     def validation_step(self, batch, batch_idx):
-        return self._shared_step(batch, "val")
+        x, y = batch
+        preds = self.forward(x, training=True)
+        acc = (preds.round() == y).float().mean()
+
+        self.log("val_acc", acc, on_step=True, on_epoch=True, prog_bar=True)
 
     def test_step(self, batch, batch_idx):
-        return self._shared_step(batch, "test")
+        x, y = batch
+        preds = self.forward(x, training=True)
+        acc = (preds.round() == y).float().mean()
+
+        self.log("test_acc", acc, on_step=True, on_epoch=True, prog_bar=False)
 
     def predict_step(self, batch):
         # TODO: figure this one out
@@ -133,32 +152,80 @@ class MultiTaskNet(pl.LightningModule):
             self.parameters(),
             **dict(self.config.model_training_config.optimizer_config),
         )
-        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-            optimizer, **dict(self.config.model_training_config.scheduler_config)
-        )
+        # scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+        #     optimizer, **dict(self.config.model_training_config.scheduler_config)
+        # )
         return {
             "optimizer": optimizer,
-            "lr_scheduler": {
-                "scheduler": scheduler,
-                "interval": "epoch",
-                "monitor": "val_loss_total",
-                "frequency": 1,
-            },
+            # "lr_scheduler": {
+            #     "scheduler": scheduler,
+            #     "interval": "epoch",
+            #     "monitor": "val_loss_total",
+            #     "frequency": 1,
+            # },
         }
 
-    def _shared_step(self, batch, name: str):
-        x, (y_age, y_gender) = batch
-        age, gender = self.forward(x, training=True)
 
-        self.log_dict(
-            {
-                name + "_loss_age": (loss_age := self.age_loss_fn(age, y_age)),
-                name
-                + "_loss_gender": (
-                    loss_gender := self.gender_loss_fn(gender, y_gender)
-                ),
-                name + "_loss_total": (total_loss := loss_age + loss_gender),
-            },
-            prog_bar=True,
+class MultiTaskNetWorking(L.LightningModule):
+    def __init__(self):
+        super().__init__()
+        # Exports the hyperparameters to a YAML file, and create "self.hparams" namespace
+        super().__init__()
+        self.save_hyperparameters()
+        self.model = self.create_model()
+        self.loss_module = nn.CrossEntropyLoss()
+
+    def create_model(self):
+        model = resnet18(pretrained=True)
+        num_ftrs = model.fc.in_features
+        model.fc = nn.Linear(num_ftrs, 2)
+        return model
+
+    def _parse_output_to_preds(self, out):
+        preds = torch.argmax(out, dim=1)
+        return preds
+
+    def forward(self, X):
+        # Forward function that is run when visualizing the graph
+        return self.model(X)
+
+    def configure_optimizers(self):
+
+        optimizer = optim.AdamW(self.parameters(), lr=0.1, weight_decay=0.0001)
+
+        # We will reduce the learning rate by 0.1 after 100 and 150 epochs
+        scheduler = optim.lr_scheduler.MultiStepLR(
+            optimizer, milestones=[100, 150], gamma=0.1
         )
-        return total_loss
+        return [optimizer], [scheduler]
+
+    def training_step(self, batch, batch_idx):
+        # "batch" is the output of the training data loader.
+        X, y_age, y_gender = batch
+        out = self.model(X)
+        loss = self.loss_module(out, y_gender)
+
+        preds = self._parse_output_to_preds(out)
+        acc = (y_gender == preds).float().mean()
+
+        # Logs the accuracy per epoch to tensorboard (weighted average over batches)
+        self.log("train_acc", acc, on_step=False, on_epoch=True, prog_bar=True)
+        self.log("train_loss", loss, on_step=False, on_epoch=True, prog_bar=True)
+        return loss
+
+    # TODO: reduce code duplication
+    def validation_step(self, batch, batch_idx):
+        X, y_age, y_gender = batch
+        out = self.model(X)
+        preds = self._parse_output_to_preds(out)
+
+        acc = (y_gender == preds).float().mean()
+        self.log("val_acc", acc)
+
+    def test_step(self, batch, batch_idx):
+        X, y_age, y_gender = batch
+        out = self.model(X)
+        preds = self._parse_output_to_preds(out)
+
+        acc = (y_gender == preds).float().mean()
+        self.log("test_acc", acc)

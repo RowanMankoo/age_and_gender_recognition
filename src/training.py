@@ -4,6 +4,11 @@ import torch
 from sklearn.model_selection import train_test_split
 from torchvision import transforms
 
+from torch.utils.data import DataLoader
+
+import torch
+from tqdm import tqdm
+
 
 # TODO: figure out how to implement this nicely
 class AgeTransformer:
@@ -54,9 +59,9 @@ def split_dataset(df, train_size=0.6, val_size=0.2):
     )
 
     # Drop the strata column
-    df_train = df_train.drop(columns="strata")
-    df_val = df_val.drop(columns="strata")
-    df_test = df_test.drop(columns="strata")
+    df_train = df_train.drop(columns="strata").reset_index(drop=True)
+    df_val = df_val.drop(columns="strata").reset_index(drop=True)
+    df_test = df_test.drop(columns="strata").reset_index(drop=True)
 
     return df_train, df_val, df_test
 
@@ -95,3 +100,22 @@ def get_preprocessing_transforms(
         transform for condition, transform in transform_conditions if condition
     ]
     return transforms.Compose(transform_list)
+
+
+def calculate_mean_std(dataset, batch_size=100):
+    loader = DataLoader(dataset, batch_size=batch_size, num_workers=0)
+    mean = 0.0
+    std = 0.0
+    nb_samples = 0.0
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    for data, _, _ in tqdm(loader, desc="Calculating mean and std"):
+        data = data.to(device)
+        batch_samples = data.size(0)
+        data = data.view(batch_samples, data.size(1), -1)
+        mean += data.mean(2).sum(0)
+        std += data.std(2).sum(0)
+        nb_samples += batch_samples
+
+    mean /= nb_samples
+    std /= nb_samples
+    return mean.cpu(), std.cpu()

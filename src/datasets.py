@@ -7,8 +7,9 @@ from PIL import Image
 from torch.utils.data import DataLoader, Dataset
 from torchvision import transforms
 
-from src.core import Config
+from config.core import Config
 from src.training import AgeTransformer, get_preprocessing_transforms
+from torchvision.transforms.functional import to_tensor
 
 
 def get_dataloaders(
@@ -73,35 +74,39 @@ class IMDBDataset(Dataset):
         # Load image into Tensor
         filename = self.folder_directory / filename
         image = Image.open(filename)
-        image = self.transform(image)
+        # image = to_tensor(image)
+        # image = self.transform(image)
 
         label = torch.tensor([int(age), int(gender)], dtype=torch.float)
 
         return image, label
 
 
-class MyCollate:
-    def __init__(self, batch_size: int, age_labels_to_bins: dict):
-        self.batch_size = batch_size
-        self.age_labels_to_bins = age_labels_to_bins
+# TODO: implement this
+from torchvision.datasets.vision import VisionDataset
 
-    def __call__(self, batch: List[Tuple[torch.Tensor, torch.Tensor]]):
-        images, labels = zip(*batch)
 
-        # Convert images to tensor and reorder dimensions
-        images = torch.stack(images, dim=0)
+class UTKFaceDataset(VisionDataset):
+    def __init__(self, df, root=Path("Data/crop_part1"), transforms=None):
+        super(UTKFaceDataset, self).__init__(root=root, transforms=transforms)
+        self.df = df
 
-        # Convert labels to tensor
-        labels = torch.stack(labels, dim=0)
+    def __getitem__(self, index):
 
-        # Transform ages to categorial labels
-        ages = labels[:, 0].long()
-        # TODO: don't like use of this class here
-        age_transformer = AgeTransformer(self.age_labels_to_bins)
-        ages = age_transformer.ages_to_labels(ages.numpy()).type(torch.LongTensor)
+        filename = self.df["filename"][index]
+        age = self.df["age"][index]
+        gender = self.df["gender"][index]
 
-        gender = labels[:, 1]
+        filename = self.root / filename
+        image = Image.open(filename)
+        if self.transforms is not None:
+            image = self.transforms(image)
 
-        labels = (ages, gender)
+        return (
+            image,
+            torch.tensor(float(age), dtype=torch.long),
+            torch.tensor(float(gender), dtype=torch.long),
+        )
 
-        return images, labels
+    def __len__(self):
+        return len(self.df)

@@ -1,18 +1,25 @@
 import pandas as pd
-import pytorch_lightning as pl
+import lightning as L
 import torch
 import torch.nn as nn
-from pytorch_lightning.callbacks import EarlyStopping
+from lightning.pytorch.callbacks import EarlyStopping
+from torchvision.transforms import ToTensor
+from torchvision import transforms
+from torch.utils.data import DataLoader
 
-from src.core import load_and_validate_config
-from src.data import get_dataloaders
-from src.modelling import MultiTaskNet
-from src.training import get_age_class_weights, split_dataset
+
+from config.core import load_and_validate_config
+from src.datasets import get_dataloaders, UTKFaceDataset
+from src.modelling import MultiTaskNet, MultiTaskNetWorking
+from src.training import get_age_class_weights, split_dataset, calculate_mean_std
+from lightning.pytorch.callbacks import LearningRateMonitor, ModelCheckpoint
 
 # You are using a CUDA device ('NVIDIA GeForce RTX 3070') that has Tensor Cores.
 # To properly utilize them, you should set `torch.set_float32_matmul_precision('medium' | 'high')`
 # which will trade-off precision for performance.
 
+# TODO: logger
+ 
 if __name__ == "__main__":
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     torch.set_float32_matmul_precision("medium")
@@ -26,33 +33,70 @@ if __name__ == "__main__":
     df_metadata = pd.read_csv("Data/metadata.csv")
     df_train, df_val, df_test = split_dataset(df_metadata, train_size=0.6, val_size=0.2)
 
-    train_dataloader, test_dataloader, val_dataloader = get_dataloaders(
-        df_train, df_test, config
+    train_dataset = UTKFaceDataset(df_train, transforms=ToTensor())
+    DATA_MEANS, DATA_STD = calculate_mean_std(train_dataset)
+    print("Data mean", DATA_MEANS)
+    print("Data std", DATA_STD)
+
+    # TODO: reimplement this back into transforms func
+    test_transform = transforms.Compose(
+        [transforms.ToTensor(), transforms.Normalize(DATA_MEANS, DATA_STD)]
     )
+    # For training, we add some augmentation. Networks are too powerful and would overfit.
+    train_transform = transforms.Compose(
+        [
+            transforms.RandomHorizontalFlip(),
+            # transforms.RandomResizedCrop((32, 32), scale=(0.8, 1.0), ratio=(0.9, 1.1)),
+            transforms.ToTensor(),
+            transforms.Normalize(DATA_MEANS, DATA_STD),
+        ]
+    )
+    # Loading the training dataset. We need to split it into a training and validation part
+    # We need to do a little trick because the validation set should not use the augmentation.
+    train_dataset = UTKFaceDataset(df=df_train, transforms=train_transform)
+    val_dataset = UTKFaceDataset(df=df_val, transforms=test_transform)
+    test_dataset = UTKFaceDataset(df=df_test, transforms=test_transform)
 
-    age_class_weights = get_age_class_weights(
-        df_train, config.model_config.age_labels_to_bins
-    ).to(device)
-
-    model = MultiTaskNet(config, age_class_weights)
-
-    early_stop_callback = EarlyStopping(
-        monitor="val_loss_total", patience=200, verbose=False, mode="min"
+    # We define a set of data loaders that we can use for various purposes later.
+    train_loader = DataLoader(
+        train_dataset,
+        batch_size=32,
+        shuffle=True,
+        drop_last=True,
+        pin_memory=True,
+        num_workers=0,
+    )
+    val_loader = DataLoader(
+        val_dataset, batch_size=32, shuffle=False, drop_last=False, num_workers=0
+    )
+    test_loader = DataLoader(
+        test_dataset, batch_size=32, shuffle=False, drop_last=False, num_workers=0
     )
 
     # training
-    trainer = pl.Trainer(
-        max_epochs=200,
+    trainer = L.Trainer(
         accelerator="gpu",
-        callbacks=[early_stop_callback],
+        max_epochs=200,
+        callbacks=[
+            ModelCheckpoint(
+                save_weights_only=True, mode="max", monitor="val_acc"
+            ),  # Save the best checkpoint based on the maximum val_acc recorded. Saves only weights and not optimizer
+            LearningRateMonitor("epoch"),
+        ],
         check_val_every_n_epoch=1,
         log_every_n_steps=1,
     )
-    trainer.fit(model, train_dataloader, test_dataloader)
 
-    trainer.test(model, test_dataloader)
+    # TODO: figure out tensorboard computation graph
+    trainer.logger._log_graph = True
 
-    # TODO: test preds on no target data
-    # preds = trainer.predict(model, test_dataloader)
+    # TODO: send config into this
+    # TODO: allow for loading of checkpointed model
+    model = MultiTaskNetWorking()
+
+    trainer.fit(model, train_loader, val_loader)
+
+    val_result = trainer.validate(model, val_loader)
+    test_result = trainer.test(model, test_loader)
 
     print("done")
