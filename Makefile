@@ -40,10 +40,13 @@ generate-metadata-and-cropped-images: venv
 
 make pre-lint:
 	poetry run black --preview --line-length $(MAX_LINE_SIZE) .
-	poetry run isort --profile=black --line-length $(MAX_LINE_SIZE) .
-	poetry run flake8 --max-line-length $(MAX_LINE_SIZE) .
+	poetry run isort --profile=black --line-length $(MAX_LINE_SIZE) **/*.py
+	poetry run flake8 --max-line-length $(MAX_LINE_SIZE) **/*.py
 
 make lint:
 	poetry run black --preview --line-length $(MAX_LINE_SIZE) --check .
-	poetry run isort --profile=black --line-length $(MAX_LINE_SIZE) --check-only .
-	poetry run flake8 --max-line-length=$(MAX_LINE_SIZE) 
+	poetry run isort --profile=black --line-length $(MAX_LINE_SIZE) --check-only **/*.py
+	poetry run flake8 --max-line-length=$(MAX_LINE_SIZE) **/*.py
+
+make tensorboard:
+	poetry run tensorboard --logdir=tb_logs

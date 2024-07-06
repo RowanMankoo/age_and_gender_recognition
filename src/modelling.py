@@ -1,57 +1,11 @@
-from pytorch_lightning.utilities.types import EVAL_DATALOADERS
+import lightning as L
 import torch
 import torch.nn as nn
-import torchvision.models as models
-from torch.nn import functional as F
-import lightning as L
-from torchvision.models import resnet18
 import torch.optim as optim
-
-
-from config.core import Config
-from src.training import get_preprocessing_transforms
-
-
-# TODO: fix this
-def freeze_layers_resnet18(model):
-    # Freeze all layers
-    for param in model.parameters():
-        param.requires_grad = False
-
-    # Unfreeze the last layer
-    for param in model.fc.parameters():
-        param.requires_grad = True
-
-    # Unfreeze the first few layers
-    for param in model.conv1.parameters():
-        param.requires_grad = True
-    for param in model.bn1.parameters():
-        param.requires_grad = True
-    for param in model.layer1.parameters():
-        param.requires_grad = True
-
-    return model
-
-
-class HeadBlock(nn.Module):
-    def __init__(self, in_channels, out_channels):
-        super(HeadBlock, self).__init__()
-
-        self.fc1 = nn.Linear(in_channels, 500)
-        self.relu = nn.ReLU(inplace=True)
-        self.fc2 = nn.Linear(500, out_channels)
-
-    def forward(self, x):
-        out = self.fc1(x)
-        out = self.relu(out)
-        out = self.fc2(out)
-
-        return out
-
-
-class Identity(nn.Module):
-    def forward(self, x):
-        return x
+from torch.nn import functional as F
+from torchvision.models import resnet18
+from torchvision.utils import make_grid
+from torch.optim.lr_scheduler import ReduceLROnPlateau
 
 
 class MultiTaskNet(L.LightningModule):
@@ -65,9 +19,14 @@ class MultiTaskNet(L.LightningModule):
         )  # Get the base model and the number of input features
         self.gender_head = nn.Linear(num_ftrs, 2)  # Classification head for gender
         self.age_head = nn.Linear(num_ftrs, 1)  # Regression head for age
+        self.gender_loss_component_weight = 0.99
+        self.age_loss_component_weight = 0.01
 
         self.loss_module_gender = nn.CrossEntropyLoss()
         self.loss_module_age = nn.MSELoss()
+
+        # Example input for visualizing the graph in Tensorboard
+        self.example_input_array = torch.rand(1, 3, 224, 224)
 
     def create_base_model_and_get_num_features(self):
         base_model = resnet18(pretrained=True)
@@ -80,49 +39,83 @@ class MultiTaskNet(L.LightningModule):
     def forward(self, X):
         features = self.base_model(X)
         gender_out = self.gender_head(features)
-        # age_out = self.age_head(features)
-        return gender_out
+        age_out = self.age_head(features)
+        return gender_out, age_out
 
-    def _parse_output_to_preds(self, out):
-        preds = torch.argmax(out, dim=1)
-        return preds
+    def _parse_output_to_preds(self, *, out_gender, out_age):
+        preds_gender = torch.argmax(out_gender, dim=1)
+        preds_age = torch.round(out_age)
+        return preds_gender, preds_age
 
     def configure_optimizers(self):
 
         optimizer = optim.AdamW(self.parameters(), lr=0.1, weight_decay=0.0001)
 
-        # We will reduce the learning rate by 0.1 after 100 and 150 epochs
-        scheduler = optim.lr_scheduler.MultiStepLR(
-            optimizer, milestones=[100, 150], gamma=0.1
+        scheduler = optim.lr_scheduler.ReduceLROnPlateau(
+            optimizer, mode="min", factor=0.1, patience=5, verbose=True
         )
-        return [optimizer], [scheduler]
+        return {
+            "optimizer": optimizer,
+            "lr_scheduler": {
+                "scheduler": ReduceLROnPlateau(
+                    optimizer,
+                    mode="min",
+                    factor=0.2,
+                    patience=10,
+                    threshold=0.001,
+                    threshold_mode="rel",
+                ),
+                "interval": "epoch",
+                "monitor": "val_loss_combined",
+                "frequency": 1,
+                # If "monitor" references validation metrics, then "frequency" should be set to a
+                # multiple of "trainer.check_val_every_n_epoch".
+            },
+        }
+
+    def _shared_step(self, batch, batch_idx, prefix):
+        X, y_age, y_gender = batch
+        out_gender, out_age = self.forward(X)
+
+        loss_gender = self.loss_module_gender(out_gender, y_gender)
+        loss_age = self.loss_module_age(out_age.view(-1), y_age)
+        combined_loss = (
+            loss_gender * self.gender_loss_component_weight
+            + loss_age * self.age_loss_component_weight
+        )
+
+        preds_gender, _ = self._parse_output_to_preds(
+            out_gender=out_gender, out_age=out_age
+        )
+
+        acc_gender = (y_gender == preds_gender).float().mean()
+        mse_age = F.mse_loss(out_age.view(-1), y_age)
+
+        self.log_dict(
+            {
+                f"{prefix}_loss_gender": loss_gender,
+                f"{prefix}_loss_age": loss_age,
+                f"{prefix}_loss_combined": combined_loss,
+                f"{prefix}_acc_gender": acc_gender,
+                f"{prefix}_mse_age": mse_age,
+            },
+            on_step=False,
+            on_epoch=True,
+            prog_bar=True,
+        )
+
+        return combined_loss
 
     def training_step(self, batch, batch_idx):
-        X, y_age, y_gender = batch
-        out = self.forward(X)
-        loss = self.loss_module_gender(out, y_gender)
-
-        preds = self._parse_output_to_preds(out)
-        acc = (y_gender == preds).float().mean()
-
-        # Logs the accuracy per epoch to tensorboard (weighted average over batches)
-        self.log("train_acc", acc, on_step=False, on_epoch=True, prog_bar=True)
-        self.log("train_loss", loss, on_step=False, on_epoch=True, prog_bar=True)
+        loss = self._shared_step(batch, batch_idx, "train")
+        if self.global_step % 50 == 0:
+            X, _, _ = batch
+            grid = make_grid(X)
+            self.logger.experiment.add_image("images", grid, self.global_step)
         return loss
 
-    # TODO: reduce code duplication
     def validation_step(self, batch, batch_idx):
-        X, y_age, y_gender = batch
-        out = self.forward(X)
-        preds = self._parse_output_to_preds(out)
-
-        acc = (y_gender == preds).float().mean()
-        self.log("val_acc", acc)
+        return self._shared_step(batch, batch_idx, "val")
 
     def test_step(self, batch, batch_idx):
-        X, y_age, y_gender = batch
-        out = self.forward(X)
-        preds = self._parse_output_to_preds(out)
-
-        acc = (y_gender == preds).float().mean()
-        self.log("test_acc", acc)
+        return self._shared_step(batch, batch_idx, "test")

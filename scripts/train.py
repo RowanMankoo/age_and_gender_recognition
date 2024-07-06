@@ -1,26 +1,29 @@
-import pandas as pd
 import lightning as L
+import pandas as pd
 import torch
-import torch.nn as nn
-from lightning.pytorch.callbacks import EarlyStopping
-from torchvision.transforms import ToTensor
-from torchvision import transforms
+from lightning.pytorch.callbacks import (
+    EarlyStopping,
+    LearningRateMonitor,
+    ModelCheckpoint,
+)
+from lightning.pytorch.loggers import TensorBoardLogger
 from torch.utils.data import DataLoader
-
+from torchvision import transforms
+from torchvision.transforms import ToTensor
 
 from config.core import load_and_validate_config
-from src.datasets import get_dataloaders, UTKFaceDataset
+from src.datasets import UTKFaceDataset
 from src.modelling import MultiTaskNet
-from src.training import get_age_class_weights, split_dataset, calculate_mean_std
-from lightning.pytorch.callbacks import LearningRateMonitor, ModelCheckpoint
+from src.training import calculate_mean_std, split_dataset
 
 # You are using a CUDA device ('NVIDIA GeForce RTX 3070') that has Tensor Cores.
 # To properly utilize them, you should set `torch.set_float32_matmul_precision('medium' | 'high')`
 # which will trade-off precision for performance.
 
-# TODO: logger
-
+# TODO: figure out tensorboard hparams optimisation?
+# TODO: filter data to begin with so equal ages?
 if __name__ == "__main__":
+    logger = TensorBoardLogger("tb_logs", name="my_model_1")
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     torch.set_float32_matmul_precision("medium")
 
@@ -30,6 +33,7 @@ if __name__ == "__main__":
     )
 
     # TODO: move this to conf?
+    # TODO: readd option which trains on whole dataset
     df_metadata = pd.read_csv("Data/metadata.csv")
     df_train, df_val, df_test = split_dataset(df_metadata, train_size=0.6, val_size=0.2)
 
@@ -73,25 +77,25 @@ if __name__ == "__main__":
         test_dataset, batch_size=32, shuffle=False, drop_last=False, num_workers=0
     )
 
-    # training
+    # TODO: add early stopping?
+
     trainer = L.Trainer(
         accelerator="gpu",
         max_epochs=200,
+        logger=logger,
         callbacks=[
             ModelCheckpoint(
-                save_weights_only=True, mode="max", monitor="val_acc"
-            ),  # Save the best checkpoint based on the maximum val_acc recorded. Saves only weights and not optimizer
+                save_weights_only=True, mode="max", monitor="val_loss_combined"
+            ),
             LearningRateMonitor("epoch"),
         ],
         check_val_every_n_epoch=1,
         log_every_n_steps=1,
     )
 
-    # TODO: figure out tensorboard computation graph
     trainer.logger._log_graph = True
 
     # TODO: send config into this
-    # TODO: allow for loading of checkpointed model
     model = MultiTaskNet()
 
     trainer.fit(model, train_loader, val_loader)
