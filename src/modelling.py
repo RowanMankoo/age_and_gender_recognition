@@ -2,23 +2,35 @@ import lightning as L
 import torch
 import torch.nn as nn
 import torch.optim as optim
+import torchvision
 from torch.nn import functional as F
-from torchvision.models import resnet18
-from torchvision.utils import make_grid
 from torch.optim.lr_scheduler import ReduceLROnPlateau
+from torchvision.utils import make_grid
+
+
+class HeadBlock(nn.Module):
+    def __init__(self, input_dim, hidden_dim, output_dim):
+        super().__init__()
+        self.fc = nn.Sequential(
+            nn.Linear(input_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, output_dim),
+        )
+
+    def forward(self, x):
+        return self.fc(x)
 
 
 class MultiTaskNet(L.LightningModule):
-    def __init__(self):
+    def __init__(self, **hparams):
         super().__init__()
         self.save_hyperparameters()
 
-        # TODO: add option to swap resnet out?
         self.base_model, num_ftrs = (
             self.create_base_model_and_get_num_features()
         )  # Get the base model and the number of input features
-        self.gender_head = nn.Linear(num_ftrs, 2)  # Classification head for gender
-        self.age_head = nn.Linear(num_ftrs, 1)  # Regression head for age
+        self.gender_head = HeadBlock(num_ftrs, self.hparams["gender_hidden_head_dim"], 2)
+        self.age_head = HeadBlock(num_ftrs, self.hparams["age_hidden_head_dim"], 1)
         self.gender_loss_component_weight = 0.99
         self.age_loss_component_weight = 0.01
 
@@ -28,11 +40,21 @@ class MultiTaskNet(L.LightningModule):
         # Example input for visualizing the graph in Tensorboard
         self.example_input_array = torch.rand(1, 3, 224, 224)
 
+    def on_train_start(self) -> None:
+        self.logger.log_hyperparams(
+            self.hparams,
+            {
+                "hp/loss_gender": 0,
+                "hp/loss_age": 0,
+                "hp/loss_combined": 0,
+            },
+        )
+
     def create_base_model_and_get_num_features(self):
-        base_model = resnet18(pretrained=True)
-        num_ftrs = (
-            base_model.fc.in_features
-        )  # Get the number of input features of the final layer
+        # Dynamically select the ResNet model
+        base_model = getattr(torchvision.models, self.hparams.resnet_model)(pretrained=True)
+
+        num_ftrs = base_model.fc.in_features  # Get the number of input features of the final layer
         base_model.fc = nn.Identity()  # Remove the final layer
         return base_model, num_ftrs
 
@@ -49,11 +71,8 @@ class MultiTaskNet(L.LightningModule):
 
     def configure_optimizers(self):
 
-        optimizer = optim.AdamW(self.parameters(), lr=0.1, weight_decay=0.0001)
+        optimizer = optim.AdamW(self.parameters(), lr=self.hparams["learning_rate"], weight_decay=0.0001)
 
-        scheduler = optim.lr_scheduler.ReduceLROnPlateau(
-            optimizer, mode="min", factor=0.1, patience=5, verbose=True
-        )
         return {
             "optimizer": optimizer,
             "lr_scheduler": {
@@ -66,7 +85,7 @@ class MultiTaskNet(L.LightningModule):
                     threshold_mode="rel",
                 ),
                 "interval": "epoch",
-                "monitor": "val_loss_combined",
+                "monitor": "val/loss_combined",
                 "frequency": 1,
                 # If "monitor" references validation metrics, then "frequency" should be set to a
                 # multiple of "trainer.check_val_every_n_epoch".
@@ -79,32 +98,40 @@ class MultiTaskNet(L.LightningModule):
 
         loss_gender = self.loss_module_gender(out_gender, y_gender)
         loss_age = self.loss_module_age(out_age.view(-1), y_age)
-        combined_loss = (
-            loss_gender * self.gender_loss_component_weight
-            + loss_age * self.age_loss_component_weight
-        )
+        loss_combined = loss_gender * self.gender_loss_component_weight + loss_age * self.age_loss_component_weight
 
-        preds_gender, _ = self._parse_output_to_preds(
-            out_gender=out_gender, out_age=out_age
-        )
+        preds_gender, _ = self._parse_output_to_preds(out_gender=out_gender, out_age=out_age)
 
         acc_gender = (y_gender == preds_gender).float().mean()
         mse_age = F.mse_loss(out_age.view(-1), y_age)
 
         self.log_dict(
             {
-                f"{prefix}_loss_gender": loss_gender,
-                f"{prefix}_loss_age": loss_age,
-                f"{prefix}_loss_combined": combined_loss,
-                f"{prefix}_acc_gender": acc_gender,
-                f"{prefix}_mse_age": mse_age,
+                f"{prefix}/loss_gender": loss_gender,
+                f"{prefix}/loss_age": loss_age,
+                f"{prefix}/loss_combined": loss_combined,
+                f"{prefix}/acc_gender": acc_gender,
+                f"{prefix}/mse_age": mse_age,
             },
             on_step=False,
             on_epoch=True,
             prog_bar=True,
         )
+        if prefix == "test":
 
-        return combined_loss
+            # self.log(
+            #     "hp/metric",
+            #     loss_combined,
+            # )
+            self.log_dict(
+                {
+                    "hp/loss_gender": loss_gender,
+                    "hp/loss_age": loss_age,
+                    "hp/loss_combined": loss_combined,
+                }
+            )
+
+        return loss_combined
 
     def training_step(self, batch, batch_idx):
         loss = self._shared_step(batch, batch_idx, "train")

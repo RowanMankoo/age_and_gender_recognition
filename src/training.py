@@ -1,26 +1,16 @@
-import numpy as np
+import lightning as L
 import pandas as pd
 import torch
+from lightning.pytorch.callbacks import EarlyStopping, LearningRateMonitor, ModelCheckpoint
+from lightning.pytorch.loggers import TensorBoardLogger
 from sklearn.model_selection import train_test_split
 from torch.utils.data import DataLoader
 from torchvision import transforms
+from torchvision.transforms import ToTensor
 from tqdm import tqdm
 
-
-# TODO: figure out how to implement this nicely
-class AgeTransformer:
-    def __init__(self, age_labels_to_bins: dict):
-        self.age_labels_to_bins = age_labels_to_bins
-        self.bins = [0] + [int(label.split(",")[1].strip(" )")) for label in age_labels_to_bins.values()]
-        self.labels = list(age_labels_to_bins.keys())
-
-    def ages_to_labels(self, ages: np.array):
-        ordinal_labels = pd.cut(ages, bins=self.bins, labels=self.labels, include_lowest=True)
-        return torch.Tensor(ordinal_labels.to_list())
-
-    def labels_to_ages(self, labels: np.array):
-        ages = [self.bins[label] for label in labels]
-        return torch.Tensor(ages)
+from src.datasets import UTKFaceDataset
+from src.modelling import MultiTaskNet
 
 
 def split_dataset(df, train_size=0.6, val_size=0.2):
@@ -56,28 +46,28 @@ def split_dataset(df, train_size=0.6, val_size=0.2):
     return df_train, df_val, df_test
 
 
-def get_preprocessing_transforms(
-    *,
-    resize: bool = True,
-    random_horizontal_flip: bool = False,
-    normalize: bool = True,
-) -> transforms.Compose:
-    # TODO: add bounding box, check if this runs on GPU first?
-    transform_conditions = [
-        (resize, transforms.Resize(256)),
-        (resize, transforms.CenterCrop(224)),
-        (random_horizontal_flip, transforms.RandomHorizontalFlip()),
-        (True, transforms.ToTensor()),
-        (
-            normalize,
-            transforms.Normalize(
-                mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]
-            ),  # these values from from mean and std of the imagenet dataset
-        ),
-    ]
+# def get_preprocessing_transforms(
+#     *,
+#     resize: bool = True,
+#     random_horizontal_flip: bool = False,
+#     normalize: bool = True,
+# ) -> transforms.Compose:
+#     # TODO: add bounding box, check if this runs on GPU first?
+#     transform_conditions = [
+#         (resize, transforms.Resize(256)),
+#         (resize, transforms.CenterCrop(224)),
+#         (random_horizontal_flip, transforms.RandomHorizontalFlip()),
+#         (True, transforms.ToTensor()),
+#         (
+#             normalize,
+#             transforms.Normalize(
+#                 mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]
+#             ),  # these values from from mean and std of the imagenet dataset
+#         ),
+#     ]
 
-    transform_list = [transform for condition, transform in transform_conditions if condition]
-    return transforms.Compose(transform_list)
+#     transform_list = [transform for condition, transform in transform_conditions if condition]
+#     return transforms.Compose(transform_list)
 
 
 def calculate_mean_std(dataset, batch_size=100):
@@ -97,3 +87,76 @@ def calculate_mean_std(dataset, batch_size=100):
     mean /= nb_samples
     std /= nb_samples
     return mean.cpu(), std.cpu()
+
+
+def train_model(max_epochs: int = 6, production_model: bool = False, **hparams):
+    logger = TensorBoardLogger("tb_logs", name=hparams["resnet_model"], default_hp_metric=False, log_graph=True)
+
+    df_metadata = pd.read_csv("Data/metadata.csv")
+    if production_model:
+        df_train = df_metadata
+        df_val = df_metadata
+        df_test = df_metadata
+    else:
+        df_train, df_val, df_test = split_dataset(df_metadata, train_size=0.6, val_size=0.2)
+
+    train_dataset = UTKFaceDataset(df_train, transforms=ToTensor())
+    DATA_MEANS, DATA_STD = calculate_mean_std(train_dataset)
+    print("Data mean", DATA_MEANS)
+    print("Data std", DATA_STD)
+
+    test_transform = transforms.Compose([transforms.ToTensor(), transforms.Normalize(DATA_MEANS, DATA_STD)])
+    train_transform = transforms.Compose(
+        [
+            transforms.RandomHorizontalFlip(),
+            transforms.ToTensor(),
+            transforms.Normalize(DATA_MEANS, DATA_STD),
+        ]
+    )
+
+    train_dataset = UTKFaceDataset(df=df_train, transforms=train_transform)
+    val_dataset = UTKFaceDataset(df=df_val, transforms=test_transform)
+
+    train_loader = DataLoader(
+        train_dataset,
+        batch_size=hparams["batch_size"],
+        shuffle=True,
+        drop_last=True,
+        pin_memory=True,
+        num_workers=0,
+    )
+    val_loader = DataLoader(
+        val_dataset,
+        batch_size=hparams["batch_size"],
+        shuffle=False,
+        drop_last=False,
+        num_workers=0,
+    )
+    test_loader = DataLoader(
+        UTKFaceDataset(df=df_test, transforms=test_transform),
+        batch_size=hparams["batch_size"],
+        shuffle=False,
+        drop_last=False,
+        num_workers=0,
+    )
+
+    trainer = L.Trainer(
+        accelerator="gpu",
+        max_epochs=max_epochs,
+        logger=logger,
+        callbacks=[
+            ModelCheckpoint(save_weights_only=True, mode="max", monitor="val/loss_combined"),
+            LearningRateMonitor("epoch"),
+            EarlyStopping(monitor="val/loss_combined", min_delta=0, patience=6, mode="min"),
+        ],
+        check_val_every_n_epoch=1,
+        log_every_n_steps=1,
+    )
+
+    model = MultiTaskNet(**hparams)
+
+    trainer.fit(model, train_loader, val_loader)
+
+    if not production_model:
+        trainer.validate(model, val_loader)
+        trainer.test(model, test_loader)
