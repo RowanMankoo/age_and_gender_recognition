@@ -29,7 +29,9 @@ class MultiTaskNet(L.LightningModule):
         self.base_model, num_ftrs = (
             self.create_base_model_and_get_num_features()
         )  # Get the base model and the number of input features
-        self.gender_head = HeadBlock(num_ftrs, self.hparams["gender_hidden_head_dim"], 2)
+        self.gender_head = HeadBlock(
+            num_ftrs, self.hparams["gender_hidden_head_dim"], 2
+        )
         self.age_head = HeadBlock(num_ftrs, self.hparams["age_hidden_head_dim"], 1)
         self.gender_loss_component_weight = 0.99
         self.age_loss_component_weight = 0.01
@@ -52,9 +54,13 @@ class MultiTaskNet(L.LightningModule):
 
     def create_base_model_and_get_num_features(self):
         # Dynamically select the ResNet model
-        base_model = getattr(torchvision.models, self.hparams.resnet_model)(pretrained=True)
+        base_model = getattr(torchvision.models, self.hparams.resnet_model)(
+            pretrained=True
+        )
 
-        num_ftrs = base_model.fc.in_features  # Get the number of input features of the final layer
+        num_ftrs = (
+            base_model.fc.in_features
+        )  # Get the number of input features of the final layer
         base_model.fc = nn.Identity()  # Remove the final layer
         return base_model, num_ftrs
 
@@ -71,7 +77,9 @@ class MultiTaskNet(L.LightningModule):
 
     def configure_optimizers(self):
 
-        optimizer = optim.AdamW(self.parameters(), lr=self.hparams["learning_rate"], weight_decay=0.0001)
+        optimizer = optim.AdamW(
+            self.parameters(), lr=self.hparams["learning_rate"], weight_decay=0.0001
+        )
 
         return {
             "optimizer": optimizer,
@@ -80,7 +88,7 @@ class MultiTaskNet(L.LightningModule):
                     optimizer,
                     mode="min",
                     factor=0.2,
-                    patience=10,
+                    patience=self.hparams["scheduler_patience"],
                     threshold=0.001,
                     threshold_mode="rel",
                 ),
@@ -98,9 +106,14 @@ class MultiTaskNet(L.LightningModule):
 
         loss_gender = self.loss_module_gender(out_gender, y_gender)
         loss_age = self.loss_module_age(out_age.view(-1), y_age)
-        loss_combined = loss_gender * self.gender_loss_component_weight + loss_age * self.age_loss_component_weight
+        loss_combined = (
+            loss_gender * self.gender_loss_component_weight
+            + loss_age * self.age_loss_component_weight
+        )
 
-        preds_gender, _ = self._parse_output_to_preds(out_gender=out_gender, out_age=out_age)
+        preds_gender, _ = self._parse_output_to_preds(
+            out_gender=out_gender, out_age=out_age
+        )
 
         acc_gender = (y_gender == preds_gender).float().mean()
         mse_age = F.mse_loss(out_age.view(-1), y_age)
@@ -119,10 +132,6 @@ class MultiTaskNet(L.LightningModule):
         )
         if prefix == "test":
 
-            # self.log(
-            #     "hp/metric",
-            #     loss_combined,
-            # )
             self.log_dict(
                 {
                     "hp/loss_gender": loss_gender,
@@ -135,7 +144,7 @@ class MultiTaskNet(L.LightningModule):
 
     def training_step(self, batch, batch_idx):
         loss = self._shared_step(batch, batch_idx, "train")
-        if self.global_step % 50 == 0:
+        if self.global_step % 500 == 0:
             X, _, _ = batch
             grid = make_grid(X)
             self.logger.experiment.add_image("images", grid, self.global_step)
