@@ -4,12 +4,6 @@ export MODEL_FOLDER_PATH=tb_logs/production_model/version_2
 # make sure to chnage this arg after running `make docker-push`
 IMAGE_NAME ?= europe-west2-docker.pkg.dev/rowan-420019/apis/age-and-gender-apis@sha256:7dceef139b8bb49c53881f42981a28d1c615a8f77619facf4c6fbf6602ae11b0
 
-train: 
-	python training.py
-
-make generate-metadata:
-	poetry run python scripts/generate_metadata.py
-
 make pre-lint:
 	poetry run black --preview --line-length $(MAX_LINE_SIZE) .
 	poetry run isort --profile=black --line-length $(MAX_LINE_SIZE) **/*.py
