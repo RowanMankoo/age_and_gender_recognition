@@ -27,8 +27,7 @@ Our best model is a ResNet-34 with test metrics of:
 
 Below are some of the plots generated for the best performing hyperparameter-tuned iteration. The top row is the training loss metrics and the bottom row is the validation loss metrics. Please note that the model is optimized on the final column, the `loss_combined`.
 
-
-![loss curves](Data/Assets/loss_curves.png)
+![loss curves](Data/Assets/loss_curves_graphs.png)
 
 ## Training
 
