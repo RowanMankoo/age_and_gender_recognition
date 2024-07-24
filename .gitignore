@@ -169,3 +169,5 @@ temp.ipynb
 *.pt
 lightning_logs/
 *.json
+
+!Data/Assets/loss_curves.png
