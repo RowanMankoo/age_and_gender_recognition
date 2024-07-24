@@ -40,6 +40,7 @@ google-auth = "^2.32.0"
 google-auth-oauthlib = "^1.2.1"
 google-auth-httplib2 = "^0.2.0"
 pytest = "^8.3.1"
+pytest-asyncio = "^0.23.8"
 
 
 [build-system]
