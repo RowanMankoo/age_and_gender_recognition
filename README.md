@@ -23,7 +23,7 @@ For serving, the model goes through a preprocessing stage where the image passes
 Our best model is a ResNet-34 with test metrics of:
 
 - accuracy gender = 0.92
-- mean squared error age = 43.43
+- mean squared error age = 43.43 (on average 6.53 years off)
 
 Below are some of the plots generated for the best performing hyperparameter-tuned iteration. The top row is the training loss metrics and the bottom row is the validation loss metrics. Please note that the model is optimized on the final column, the `loss_combined`.
 
