@@ -1,0 +1,27 @@
+[tool.poetry]
+name = "serving"
+version = "0.1.0"
+description = ""
+authors = ["Rowan Mankoo <rowan.mankoo@gmail.com>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.10"
+fastapi = "^0.111.1"
+uvicorn = "^0.30.3"
+opencv-python = "^4.10.0.84"
+numpy = "^2.0.1"
+pillow = "^10.4.0"
+lightning = "^2.3.3"
+torch = {version = "^2.3.1+cpu", source = "pytorch_cpu"}
+torchvision = {version = "^0.18.1+cpu", source = "pytorch_cpu"}
+
+
+[[tool.poetry.source]]
+name = "pytorch_cpu"
+url = "https://download.pytorch.org/whl/cpu"
+priority = "explicit"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"

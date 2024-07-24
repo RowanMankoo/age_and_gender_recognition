@@ -4,7 +4,7 @@ import torch.nn as nn
 import torch.optim as optim
 import torchvision
 from torch.nn import functional as F
-from torch.optim.lr_scheduler import ReduceLROnPlateau
+from torch.optim.lr_scheduler import MultiStepLR, ReduceLROnPlateau
 from torchvision.utils import make_grid
 
 
@@ -22,16 +22,15 @@ class HeadBlock(nn.Module):
 
 
 class MultiTaskNet(L.LightningModule):
-    def __init__(self, **hparams):
+    def __init__(self, production_model:bool, **hparams):
         super().__init__()
         self.save_hyperparameters()
+        self.production_model = production_model
 
         self.base_model, num_ftrs = (
             self.create_base_model_and_get_num_features()
         )  # Get the base model and the number of input features
-        self.gender_head = HeadBlock(
-            num_ftrs, self.hparams["gender_hidden_head_dim"], 2
-        )
+        self.gender_head = HeadBlock(num_ftrs, self.hparams["gender_hidden_head_dim"], 2)
         self.age_head = HeadBlock(num_ftrs, self.hparams["age_hidden_head_dim"], 1)
         self.gender_loss_component_weight = 0.99
         self.age_loss_component_weight = 0.01
@@ -39,8 +38,10 @@ class MultiTaskNet(L.LightningModule):
         self.loss_module_gender = nn.CrossEntropyLoss()
         self.loss_module_age = nn.MSELoss()
 
-        # Example input for visualizing the graph in Tensorboard
+        # Example input for visualizing the graph in Tensorboardmake run-docker
+
         self.example_input_array = torch.rand(1, 3, 224, 224)
+
 
     def on_train_start(self) -> None:
         self.logger.log_hyperparams(
@@ -53,14 +54,9 @@ class MultiTaskNet(L.LightningModule):
         )
 
     def create_base_model_and_get_num_features(self):
-        # Dynamically select the ResNet model
-        base_model = getattr(torchvision.models, self.hparams.resnet_model)(
-            pretrained=True
-        )
+        base_model = getattr(torchvision.models, self.hparams.resnet_model)(pretrained=not self.production_model)
 
-        num_ftrs = (
-            base_model.fc.in_features
-        )  # Get the number of input features of the final layer
+        num_ftrs = base_model.fc.in_features  # Get the number of input features of the final layer
         base_model.fc = nn.Identity()  # Remove the final layer
         return base_model, num_ftrs
 
@@ -77,21 +73,28 @@ class MultiTaskNet(L.LightningModule):
 
     def configure_optimizers(self):
 
-        optimizer = optim.AdamW(
-            self.parameters(), lr=self.hparams["learning_rate"], weight_decay=0.0001
-        )
+        optimizer = optim.AdamW(self.parameters(), lr=self.hparams["learning_rate"], weight_decay=0.0001)
+
+        if self.production_model:
+            scheduler = MultiStepLR(
+                optimizer,
+                milestones=self.hparams["scheduler_milestones"],
+                gamma=0.2,
+            )
+        else:
+            scheduler = ReduceLROnPlateau(
+                optimizer,
+                mode="min",
+                factor=0.2,
+                patience=self.hparams["scheduler_patience"],
+                threshold=0.001,
+                threshold_mode="rel",
+            )
 
         return {
             "optimizer": optimizer,
             "lr_scheduler": {
-                "scheduler": ReduceLROnPlateau(
-                    optimizer,
-                    mode="min",
-                    factor=0.2,
-                    patience=self.hparams["scheduler_patience"],
-                    threshold=0.001,
-                    threshold_mode="rel",
-                ),
+                "scheduler": scheduler,
                 "interval": "epoch",
                 "monitor": "val/loss_combined",
                 "frequency": 1,
@@ -106,14 +109,9 @@ class MultiTaskNet(L.LightningModule):
 
         loss_gender = self.loss_module_gender(out_gender, y_gender)
         loss_age = self.loss_module_age(out_age.view(-1), y_age)
-        loss_combined = (
-            loss_gender * self.gender_loss_component_weight
-            + loss_age * self.age_loss_component_weight
-        )
+        loss_combined = loss_gender * self.gender_loss_component_weight + loss_age * self.age_loss_component_weight
 
-        preds_gender, _ = self._parse_output_to_preds(
-            out_gender=out_gender, out_age=out_age
-        )
+        preds_gender, _ = self._parse_output_to_preds(out_gender=out_gender, out_age=out_age)
 
         acc_gender = (y_gender == preds_gender).float().mean()
         mse_age = F.mse_loss(out_age.view(-1), y_age)

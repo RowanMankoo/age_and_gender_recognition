@@ -12,3 +12,4 @@ idea played with for classificiton of age buckets, but went with reg  and then b
 - `scripts\` Contains all runnable scripts such as training or data cleaning steps
 - `src\` Contains all source code related to model training
 - `Data\` Empty repo but it is where the imdb dataset should be copied into
+ s

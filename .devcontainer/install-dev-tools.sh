@@ -50,7 +50,7 @@ curl -sSL https://install.python-poetry.org | python3 -
 echo 'export PATH="/root/.local/bin:$PATH"' >> ~/.bashrc
 
 # clean up
-rm cuda_*.run
-rm cuda-keyring*.deb
+# rm cuda_*.run
+# rm cuda-keyring*.deb
 apt-get autoremove -y
 apt-get clean

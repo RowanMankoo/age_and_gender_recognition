@@ -1,17 +1,8 @@
 MAX_LINE_SIZE := 120
+MODEL_FOLDER_PATH=tb_logs/production_model/version_2
 
 train: 
 	python training.py
-
-venv: 
-	@eval "$$(pyenv init -)" && \
-	pyenv activate $(VENV_NAME)
-
-#	echo $$(pyenv which python)
-
-
-# ======================= Initial setup =======================
-
 
 make generate-metadata:
 	poetry run python scripts/generate_metadata.py
@@ -28,3 +19,18 @@ make lint:
 
 make tensorboard:
 	poetry run tensorboard --logdir=tb_logs
+
+make start-api-no-docker:
+	uvicorn serving.api:app --host 0.0.0.0 --port 8080
+
+make docker-build:
+	docker build -t age-and-gender-api -f serving/Dockerfile .
+
+make docker-run:
+	docker run -p 8080:8080 age-and-gender-api
+
+make docker-tag:
+	docker tag age-and-gender-api europe-west2-docker.pkg.dev/rowan-420019/apis/age-and-gender-apis
+
+make deploy-cloud-run:
+	gcloud run deploy --image=europe-west2-docker.pkg.dev/rowan-420019/apis/age-and-gender-apis@sha256:7dceef139b8bb49c53881f42981a28d1c615a8f77619facf4c6fbf6602ae11b0 --memory 1Gi
