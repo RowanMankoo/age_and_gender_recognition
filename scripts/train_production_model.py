@@ -11,13 +11,12 @@ if __name__ == "__main__":
     parser.add_argument("--scheduler_patience", type=int, default=10)
     parser.add_argument("--max_epochs", type=int, default=50)
 
-    # add extra hparams peformed our search over
+    # add extra hparams which we have peformed our hyperparameter tuning on
     parser.add_argument("--learning_rate", type=float, default=0.00032849)
     parser.add_argument("--age_hidden_head_dim", type=int, default=66)
     parser.add_argument("--gender_hidden_head_dim", type=int, default=27)
     parser.add_argument("--resnet_model", type=str, default="resnet34")
 
-    # new arg as we have diff scheduler
     parser.add_argument("--scheduler_milestones", type=int, nargs="+", default=[24, 36, 48])
 
     args = parser.parse_args()

@@ -1,7 +1,8 @@
-import logging
-from io import BytesIO
-import os
 import glob
+import logging
+import os
+from io import BytesIO
+from pathlib import Path
 
 import cv2
 import numpy as np
@@ -10,7 +11,6 @@ import yaml
 from fastapi import FastAPI, File, UploadFile
 from PIL import Image
 from torchvision import transforms
-from pathlib import Path
 
 from src.modelling import MultiTaskNet
 
@@ -25,9 +25,7 @@ hparams_file = model_folder_path / Path("hparams.yaml")
 
 def crop_face(image):
     image_cv = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
-    faces = face_cascade.detectMultiScale(
-        image_cv, scaleFactor=1.1, minNeighbors=5, minSize=(30, 30)
-    )
+    faces = face_cascade.detectMultiScale(image_cv, scaleFactor=1.1, minNeighbors=5, minSize=(30, 30))
 
     # If no faces are detected, return the original image
     if len(faces) == 0:
@@ -60,15 +58,11 @@ transform = transforms.Compose(
     [
         transforms.Resize((224, 224)),
         transforms.ToTensor(),
-        transforms.Normalize(
-            mean=DATA_MEANS, std=DATA_STD
-        ),
+        transforms.Normalize(mean=DATA_MEANS, std=DATA_STD),
     ]
 )
 
-face_cascade = cv2.CascadeClassifier(
-    cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
-)
+face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
 
 
 @app.post("/predict")

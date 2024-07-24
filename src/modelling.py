@@ -22,14 +22,12 @@ class HeadBlock(nn.Module):
 
 
 class MultiTaskNet(L.LightningModule):
-    def __init__(self, production_model:bool, **hparams):
+    def __init__(self, production_model: bool, **hparams):
         super().__init__()
         self.save_hyperparameters()
         self.production_model = production_model
 
-        self.base_model, num_ftrs = (
-            self.create_base_model_and_get_num_features()
-        )  # Get the base model and the number of input features
+        self.base_model, num_ftrs = self.create_base_model_and_get_num_features()
         self.gender_head = HeadBlock(num_ftrs, self.hparams["gender_hidden_head_dim"], 2)
         self.age_head = HeadBlock(num_ftrs, self.hparams["age_hidden_head_dim"], 1)
         self.gender_loss_component_weight = 0.99
@@ -38,10 +36,8 @@ class MultiTaskNet(L.LightningModule):
         self.loss_module_gender = nn.CrossEntropyLoss()
         self.loss_module_age = nn.MSELoss()
 
-        # Example input for visualizing the graph in Tensorboardmake run-docker
-
+        # Example input for visualizing the graph in Tensorboard
         self.example_input_array = torch.rand(1, 3, 224, 224)
-
 
     def on_train_start(self) -> None:
         self.logger.log_hyperparams(
@@ -98,8 +94,6 @@ class MultiTaskNet(L.LightningModule):
                 "interval": "epoch",
                 "monitor": "val/loss_combined",
                 "frequency": 1,
-                # If "monitor" references validation metrics, then "frequency" should be set to a
-                # multiple of "trainer.check_val_every_n_epoch".
             },
         }
 

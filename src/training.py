@@ -46,30 +46,6 @@ def split_dataset(df, train_size=0.6, val_size=0.2):
     return df_train, df_val, df_test
 
 
-# def get_preprocessing_transforms(
-#     *,
-#     resize: bool = True,
-#     random_horizontal_flip: bool = False,
-#     normalize: bool = True,
-# ) -> transforms.Compose:
-#     # TODO: add bounding box, check if this runs on GPU first?
-#     transform_conditions = [
-#         (resize, transforms.Resize(256)),
-#         (resize, transforms.CenterCrop(224)),
-#         (random_horizontal_flip, transforms.RandomHorizontalFlip()),
-#         (True, transforms.ToTensor()),
-#         (
-#             normalize,
-#             transforms.Normalize(
-#                 mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]
-#             ),  # these values from from mean and std of the imagenet dataset
-#         ),
-#     ]
-
-#     transform_list = [transform for condition, transform in transform_conditions if condition]
-#     return transforms.Compose(transform_list)
-
-
 def calculate_mean_std(dataset, batch_size=100):
     loader = DataLoader(dataset, batch_size=batch_size, num_workers=0)
     mean = 0.0
