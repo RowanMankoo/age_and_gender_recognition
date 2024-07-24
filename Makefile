@@ -1,5 +1,5 @@
 MAX_LINE_SIZE := 120
-MODEL_FOLDER_PATH=tb_logs/production_model/version_2
+export MODEL_FOLDER_PATH=tb_logs/production_model/version_2
 
 train: 
 	python training.py
@@ -24,7 +24,7 @@ make start-api-no-docker:
 	uvicorn serving.api:app --host 0.0.0.0 --port 8080
 
 make docker-build:
-	docker build -t age-and-gender-api -f serving/Dockerfile .
+	docker build --build-arg MODEL_FOLDER_PATH=$(MODEL_FOLDER_PATH) -t age-and-gender-api -f serving/Dockerfile .
 
 make docker-run:
 	docker run -p 8080:8080 age-and-gender-api

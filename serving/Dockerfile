@@ -14,12 +14,13 @@ COPY ./serving/pyproject.toml ./serving/poetry.lock* /app/serving/
 WORKDIR /app/serving
 RUN poetry install --no-interaction --no-ansi
 
-ARG PATH_TO_MODEL_CHECKPOINT=tb_logs/production_model/version_2
+ARG MODEL_FOLDER_PATH
+ENV MODEL_FOLDER_PATH=${MODEL_FOLDER_PATH}
 
 WORKDIR /app
 COPY src/ /app/src
 COPY serving/ /app/serving
-COPY ${PATH_TO_MODEL_CHECKPOINT} /app/${PATH_TO_MODEL_CHECKPOINT}
+COPY ${MODEL_FOLDER_PATH} /app/${MODEL_FOLDER_PATH}
 
 EXPOSE 80
 
