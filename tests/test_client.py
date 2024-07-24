@@ -11,7 +11,9 @@ async def test_cloud_run_endpoint():
     image_path = "Data/crop_part1/1_0_0_20161219140623097.jpg.chip.jpg"
 
     client = AgeAndGenderClient(url, key_path)
-    resp = await client.send_image(image_path)
+    with open(image_path, "rb") as image_file:
+        image_data = image_file.read()
+    resp = await client.send_image(image_data)
 
     assert resp["age"] > 0
     assert resp["gender"] in ["Male", "Female"]
@@ -24,7 +26,9 @@ async def test_local_endpoint():
     image_path = "Data/crop_part1/1_0_0_20161219140623097.jpg.chip.jpg"
 
     client = AgeAndGenderClient(url)
-    resp = await client.send_image(image_path)
+    with open(image_path, "rb") as image_file:
+        image_data = image_file.read()
+    resp = await client.send_image(image_data)
 
     assert resp["age"] > 0
     assert resp["gender"] in ["Male", "Female"]

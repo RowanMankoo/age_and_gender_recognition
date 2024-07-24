@@ -1,3 +1,5 @@
+from typing import BinaryIO
+
 import httpx
 from google.auth.transport.requests import Request
 from google.oauth2 import service_account
@@ -20,13 +22,12 @@ class AgeAndGenderClient:
         credentials.refresh(request)
         return credentials.token
 
-    async def send_image(self, image_path):
-        with open(image_path, "rb") as image_file:
-            files = {"file": image_file}
-            headers = {}
-            if self.id_token:
-                headers["Authorization"] = f"Bearer {self.id_token}"
-            async with httpx.AsyncClient() as client:
-                response = await client.post(self.url, files=files, headers=headers)
+    async def send_image(self, image_data: BinaryIO):
+        files = {"file": image_data}
+        headers = {}
+        if self.id_token:
+            headers["Authorization"] = f"Bearer {self.id_token}"
+        async with httpx.AsyncClient() as client:
+            response = await client.post(self.url, files=files, headers=headers)
 
         return response.json()
