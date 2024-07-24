@@ -15,6 +15,7 @@ The model architecture is a ResNet backbone. Multiple different versions of ResN
 To optimise this network, we have a Cross Entropy loss for the gender head and a Mean Squared Error (MSE) loss for the age head. Obviously, for Backpropagation (BP) to work, we need to combine these into a single loss function. To do this, there are many strategies, but we have employed a simple one of weighting the age loss component with 0.1 and the gender loss component with 0.99. This is based on observational findings and the magnitude of MSE vs Cross Entropy. The formula for the final loss is $Combined\_Loss = 0.1*CE\_age + 0.99*MSE\_gender$. We also implemented an ADAM optimizer with a ReduceLROnPlateau scheduler. We also had a model checkpoint based on the best validation loss and we retrain on the whole dataset based on this.
 
 ## Serving 
+
 For serving, the model goes through a preprocessing stage where the image passes through a cascade classifier which crops the image to the face region. So, the deployed model can handle any images as long as they contain one person and a clear view of their face. All info on the serving side can be found in the `serving/` folder.
 
 ## Model metrics
@@ -44,4 +45,6 @@ Once you have trained your production model, you can move onto deployment. This 
 4. `make docker-push` - This command pushes the tagged image to the Artifact Registry.
 5. `make deploy-cloud-run` - This command deploys the pushed image to Cloud Run. Before running this stage, please make sure to change the `IMAGE_NAME` default argument in the Makefile to your image name in GCP's Artifact Registry.
 
-# TODO: testing
+## Tests
+
+To save time, tests have only been created for the client living in `serving/client.py`. To successfully run these tests, please make sure you have a deployed API via Cloud Run and a service account JSON in your root directory to run the `test_cloud_run_endpoint` test, or have the API running locally to run the `test_local_endpoint` test.
